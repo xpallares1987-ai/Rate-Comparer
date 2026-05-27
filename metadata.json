@@ -1,0 +1,6 @@
+{
+  "name": "Freight Rate Comparator",
+  "description": "Upload, visualize, and compare carrier shipping rates from DATO.xlsx with custom filtering, IndexedDB, and multi-language support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
