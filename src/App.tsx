@@ -11,11 +11,16 @@ import { LOCALES } from "./locale";
 import { FreightDB } from "./services/db";
 import { eventBus } from "./services/eventBus";
 import { filterRates } from "./services/rateFilter";
+import { parseDatosJsRows } from "./services/rateParser";
+import { DATA_INJECTED } from "./data/datos";
 
 import DropZone from "./components/DropZone";
 import FilterBar from "./components/FilterBar";
+import RecentSearches from "./components/RecentSearches";
 import ComparisonTable from "./components/ComparisonTable";
 import RateChart from "./components/RateChart";
+import OutlierPanel from "./components/OutlierPanel";
+import CarrierPerformance from "./components/CarrierPerformance";
 import ConsoleLogs from "./components/ConsoleLogs";
 import UnitTestRunner from "./components/UnitTestRunner";
 
@@ -33,11 +38,13 @@ export default function App() {
   const [allRates, setAllRates] = useState<FreightRate[]>([]);
   const [filters, setFilters] = useState<ActiveFilters>({
     mes: "all",
-    pol: "all",
-    pod: "all",
-    carrier: "all",
+    pol: ["all"],
+    pod: ["all"],
+    carrier: ["all"],
     sheetSource: "all",
     carrierSearch: "",
+    startDate: "",
+    endDate: "",
   });
 
   const [filteredRates, setFilteredRates] = useState<FreightRate[]>([]);
@@ -45,7 +52,22 @@ export default function App() {
 
   const loadRatesFromDatabase = async () => {
     try {
-      const records = await FreightDB.getAllRates();
+      let records = await FreightDB.getAllRates();
+      // Check if DB requires Proper Case & split fletes migration
+      const needsMigration = records.some(r => 
+        r.pol === "BARCELONA" || 
+        r.pol === "VALENCIA" || 
+        r.pod.toLowerCase().includes("&") ||
+        (r.pod.toUpperCase().includes("SKIKDA") && r.pod.toUpperCase().includes("ANNABA"))
+      );
+      
+      if (records.length === 0 || needsMigration) {
+        console.log("%c[App] Database empty or needs Proper Case / joint-fletes migration. Re-initializing seed from DATA_INJECTED...", "color: #f59e0b; font-weight: bold;");
+        await FreightDB.clearAll();
+        const parsed = parseDatosJsRows(DATA_INJECTED);
+        await FreightDB.saveRates(parsed);
+        records = await FreightDB.getAllRates();
+      }
       setAllRates(records);
       setDbLength(records.length);
       applyCurrentFilters(records, filters);
@@ -75,11 +97,13 @@ export default function App() {
       setDbLength(0);
       setFilters({
         mes: "all",
-        pol: "all",
-        pod: "all",
-        carrier: "all",
+        pol: ["all"],
+        pod: ["all"],
+        carrier: ["all"],
         sheetSource: "all",
         carrierSearch: "",
+        startDate: "",
+        endDate: "",
       });
     });
 
@@ -110,11 +134,13 @@ export default function App() {
   const handleResetFilters = () => {
     setFilters({
       mes: "all",
-      pol: "all",
-      pod: "all",
-      carrier: "all",
+      pol: ["all"],
+      pod: ["all"],
+      carrier: ["all"],
       sheetSource: "all",
       carrierSearch: "",
+      startDate: "",
+      endDate: "",
     });
   };
 
@@ -167,6 +193,13 @@ export default function App() {
             filters={filters}
             onFilterChange={setFilters}
             onReset={handleResetFilters}
+          />
+
+          {/* Recent Searches Panel */}
+          <RecentSearches
+            t={t}
+            currentFilters={filters}
+            onSelectSearch={setFilters}
           />
         </div>
 
@@ -304,23 +337,31 @@ export default function App() {
 
           {/* Interactive Charts & Pricing Matrix designtime */}
           {dbLength > 0 ? (
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
-              
-              {/* Graphic container (1/3 weight) */}
-              <div className="xl:col-span-1">
-                <RateChart
-                  t={t}
-                  filteredRates={filteredRates}
-                  allRates={allRates}
-                  onCarrierSelect={(carrier) => setFilters((prev) => ({ ...prev, carrier }))}
-                />
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
+                
+                {/* Graphic container (1/3 weight) */}
+                <div className="xl:col-span-1">
+                  <RateChart
+                    t={t}
+                    filteredRates={filteredRates}
+                    allRates={allRates}
+                    onCarrierSelect={(carrier) => setFilters((prev) => ({ ...prev, carrier }))}
+                  />
+                </div>
+
+                {/* Dynamic Rates Matrix table (2/3 weight) */}
+                <div className="xl:col-span-2 min-h-0">
+                  <ComparisonTable t={t} filteredRates={filteredRates} allRates={allRates} />
+                </div>
+
               </div>
 
-              {/* Dynamic Rates Matrix table (2/3 weight) */}
-              <div className="xl:col-span-2 min-h-0">
-                <ComparisonTable t={t} filteredRates={filteredRates} allRates={allRates} />
-              </div>
+              {/* Data Entry Audit & Outlier Rate Detector */}
+              <OutlierPanel lang={lang} allRates={allRates} filteredRates={filteredRates} />
 
+              {/* Carrier Reliability & Transit Congestion (D3 Analytics Engine) */}
+              <CarrierPerformance t={t} filteredRates={filteredRates} />
             </div>
           ) : (
             <div className="bg-white rounded-xl border border-slate-250 p-16 text-center shadow-xs flex flex-col items-center justify-center space-y-4">

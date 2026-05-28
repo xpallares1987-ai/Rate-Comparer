@@ -9,7 +9,8 @@ import { Upload, FileCode, CheckCircle2, AlertTriangle, PlayCircle } from "lucid
 import { FreightDB } from "../services/db";
 import { eventBus } from "../services/eventBus";
 import { FreightRate, TranslationSet } from "../types";
-import { parseRawSheetRows } from "../services/rateParser";
+import { parseRawSheetRows, parseDatosJsRows } from "../services/rateParser";
+import { DATA_INJECTED } from "../data/datos";
 
 interface DropZoneProps {
   t: TranslationSet;
@@ -108,6 +109,20 @@ export default function DropZone({ t }: DropZoneProps) {
             parsedRates.push(...sheetRates);
           }
 
+          // Fallback: If no sheets matched the template names, try to parse the first sheet of the workbook anyway
+          if (parsedRates.length === 0 && workbook.SheetNames.length > 0) {
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            const rawRows = XLSX.utils.sheet_to_json<any>(worksheet, { defval: "" });
+            if (rawRows.length > 0) {
+              const sheetRates = parseRawSheetRows(rawRows, firstSheetName);
+              if (sheetRates.length > 0) {
+                parsedRates.push(...sheetRates);
+                readAnySheet = true;
+              }
+            }
+          }
+
           if (!readAnySheet || parsedRates.length === 0) {
             throw new Error("No matching spreadsheet records (sheets 'DATOS', 'MESES ANTERIORES' or 'Buscador' with corresponding columns) could be found.");
           }
@@ -152,66 +167,23 @@ export default function DropZone({ t }: DropZoneProps) {
     const startParseTime = performance.now();
 
     try {
-      const mockRates: FreightRate[] = [];
-      const pols = ["ESBCN (BARCELONA)", "CNSHA (SHANGHAI)", "USLAX (LOS ANGELES)", "DEHAM (HAMBURG)"];
-      const pods = ["USNYC (NEW YORK)", "ESVLC (VALENCIA)", "SGPIN (SINGAPORE)", "NLRTM (ROTTERDAM)"];
-      const carriers = ["Ocean Express", "Global Logistics", "Pacific Link", "Transatlantic Gmbh", "Apex Shipping Line"];
-      
-      const months = ["May 2026", "June 2026", "July 2026"];
-      const sheets = ["DATOS", "MESES ANTERIORES", "Buscador"];
-
-      sheets.forEach((sheet) => {
-        months.forEach((m) => {
-          pols.forEach((pol, pIdx) => {
-            const pod = pods[pIdx % pods.length];
-            carriers.forEach((carrier, cIdx) => {
-              const carrierBase = 1050 + (cIdx * 140);
-              const ocean = Math.max(850, carrierBase + Math.floor(Math.sin(pIdx + cIdx) * 160));
-              const fob = 220 + (cIdx * 35);
-              const dest = 240 + (pIdx * 45) + (cIdx * 10);
-              
-              const baf = 45 + (cIdx * 12);
-              const thc = 115 + (pIdx * 8);
-              const lss = 35;
-              const otros = 30;
-
-              const total = ocean + fob + dest + baf + thc + lss + otros;
-
-              mockRates.push({
-                sheetSource: sheet,
-                mes: m,
-                pol,
-                pod,
-                carrier,
-                total,
-                gastosFob: fob,
-                oceanFreight: ocean,
-                gastosDestino: dest,
-                baf,
-                thc,
-                lss,
-                otrosRecargos: otros
-              });
-            });
-          });
-        });
-      });
+      const realRates = parseDatosJsRows(DATA_INJECTED);
 
       await FreightDB.clearAll();
-      await FreightDB.saveRates(mockRates);
+      await FreightDB.saveRates(realRates);
 
       const timeTaken = (performance.now() - startParseTime).toFixed(0);
       setFeedback({
         type: "success",
-        message: `Sample data loaded! (${mockRates.length} rows stored)`,
+        message: `Corporate seed data successfully loaded! (${realRates.length} records parsed in ${timeTaken}ms)`,
       });
 
       eventBus.emit("data_loaded");
     } catch (err: any) {
-      console.error("[DropZone] Loading Demo failed:", err);
+      console.error("[DropZone] Loading seed failed:", err);
       setFeedback({
         type: "error",
-        message: "Failed to assemble demo rates.",
+        message: "Failed to assemble seed corporate rates.",
         details: err.message,
       });
     } finally {

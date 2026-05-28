@@ -212,9 +212,9 @@ export function runUnitTestSuite(): TestCaseResult[] {
     const filterPOLOnly: ActiveFilters = {
       sheetSource: "all",
       mes: "all",
-      pol: "ESBCN (BARCELONA)",
-      pod: "all",
-      carrier: "all"
+      pol: ["ESBCN (BARCELONA)"],
+      pod: ["all"],
+      carrier: ["all"]
     };
     const resultsPOL = filterRates(mockDataset, filterPOLOnly);
     assert.equal(resultsPOL.length, 2, "Filters dataset precisely to match target POL");
@@ -224,9 +224,9 @@ export function runUnitTestSuite(): TestCaseResult[] {
     const filterPolPod: ActiveFilters = {
       sheetSource: "all",
       mes: "all",
-      pol: "ESBCN (BARCELONA)",
-      pod: "USNYC (NEW YORK)",
-      carrier: "all"
+      pol: ["ESBCN (BARCELONA)"],
+      pod: ["USNYC (NEW YORK)"],
+      carrier: ["all"]
     };
     const resultsPolPod = filterRates(mockDataset, filterPolPod);
     assert.equal(resultsPolPod.length, 2, "POL + POD simultaneous filter sifts precisely");
@@ -235,9 +235,9 @@ export function runUnitTestSuite(): TestCaseResult[] {
     const filterCaseInsensitive: ActiveFilters = {
       sheetSource: "all",
       mes: "all",
-      pol: "esbcn (barcelona)",
-      pod: "usnyc (new york)",
-      carrier: "all"
+      pol: ["esbcn (barcelona)"],
+      pod: ["usnyc (new york)"],
+      carrier: ["all"]
     };
     const resultsCI = filterRates(mockDataset, filterCaseInsensitive);
     assert.equal(resultsCI.length, 2, "POL / POD filter mapping operates case-insensitively");
@@ -246,9 +246,9 @@ export function runUnitTestSuite(): TestCaseResult[] {
     const filterSheetSource: ActiveFilters = {
       sheetSource: "MESES ANTERIORES",
       mes: "all",
-      pol: "ESBCN (BARCELONA)",
-      pod: "USNYC (NEW YORK)",
-      carrier: "all"
+      pol: ["ESBCN (BARCELONA)"],
+      pod: ["USNYC (NEW YORK)"],
+      carrier: ["all"]
     };
     const resultsSheet = filterRates(mockDataset, filterSheetSource);
     assert.equal(resultsSheet.length, 1, "Sifts perfectly by spreadsheet tab/source criteria");
@@ -258,9 +258,9 @@ export function runUnitTestSuite(): TestCaseResult[] {
     const filterAll: ActiveFilters = {
       sheetSource: "all",
       mes: "all",
-      pol: "all",
-      pod: "all",
-      carrier: "all"
+      pol: ["all"],
+      pod: ["all"],
+      carrier: ["all"]
     };
     const resultsAll = filterRates(mockDataset, filterAll);
     assert.equal(resultsAll.length, mockDataset.length, "Resets to absolute original record length when filters match 'all'");

@@ -565,6 +565,7 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
   const [showDensityHeatmap, setShowDensityHeatmap] = useState(false);
   const [drilldownCarrier, setDrilldownCarrier] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<"chart" | "map">("chart");
+  const [showForecast, setShowForecast] = useState(false);
   const chartRef = useRef<any>(null);
 
   // Extract unique carriers with their respective rates for comparison
@@ -780,8 +781,66 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
     ? ((avgTotalTimeline - avgOceanTimeline) / avgTotalTimeline) * 100 
     : 0;
 
+  const getNextMonth = (currentMes: string) => {
+    const list = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const listSp = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+    const norm = currentMes.toLowerCase();
+    
+    let idx = list.findIndex(m => norm.startsWith(m.toLowerCase()));
+    if (idx !== -1) {
+      return list[(idx + 1) % 12];
+    }
+    
+    let idxSp = listSp.findIndex(m => m.toLowerCase() === norm);
+    if (idxSp !== -1) {
+      return listSp[(idxSp + 1) % 12];
+    }
+    
+    return "Next Month";
+  };
+
+  const extendedLabels = React.useMemo(() => {
+    const actualLabels = sortedHistory.map((rate) => `${rate.mes} (${rate.pol}➔${rate.pod})`);
+    if (showForecast && sortedHistory.length > 0) {
+      const lastItem = sortedHistory[sortedHistory.length - 1];
+      const nextMonth = getNextMonth(lastItem.mes);
+      return [...actualLabels, `*FCST* ${nextMonth} (${lastItem.pol}➔${lastItem.pod})`];
+    }
+    return actualLabels;
+  }, [sortedHistory, showForecast]);
+
+  const predictedRates = React.useMemo(() => {
+    if (sortedHistory.length === 0) return [];
+    const n = sortedHistory.length;
+    if (n === 1) {
+      return [sortedHistory[0].total, Math.round(sortedHistory[0].total * 1.02)];
+    }
+
+    let sumX = 0;
+    let sumY = 0;
+    let sumXY = 0;
+    let sumXX = 0;
+    
+    for (let i = 0; i < n; i++) {
+      sumX += i;
+      sumY += sortedHistory[i].total;
+      sumXY += i * sortedHistory[i].total;
+      sumXX += i * i;
+    }
+    
+    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX || 1);
+    const intercept = (sumY - slope * sumX) / n;
+    
+    const predictions = [];
+    const targetLength = showForecast ? n + 1 : n;
+    for (let i = 0; i < targetLength; i++) {
+      predictions.push(Math.round(intercept + slope * i));
+    }
+    return predictions;
+  }, [sortedHistory, showForecast]);
+
   const timelineData = {
-    labels: sortedHistory.map((rate) => `${rate.mes} (${rate.pol}➔${rate.pod})`),
+    labels: extendedLabels,
     datasets: [
       {
         label: t.chartOcean || "Ocean Freight",
@@ -811,12 +870,33 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
         pointHoverRadius: 8,
         fill: true,
       },
+      ...(showForecast && predictedRates.length > 0 ? [
+        {
+          label: "Predicted Rate",
+          data: predictedRates,
+          borderColor: "rgb(236, 72, 153)", // Pink 500
+          backgroundColor: "rgba(236, 72, 153, 0.04)",
+          borderWidth: 2.5,
+          borderDash: [6, 4],
+          tension: 0.3,
+          pointBackgroundColor: "rgb(236, 72, 153)",
+          pointBorderColor: "#fff",
+          pointBorderWidth: 2,
+          pointRadius: 6,
+          pointHoverRadius: 8,
+          fill: false,
+        }
+      ] : [])
     ],
   };
 
   const timelineOptions: ChartOptions<"line"> = {
     responsive: true,
     maintainAspectRatio: false,
+    animation: {
+      duration: 850,
+      easing: "easeOutQuart" as any,
+    },
     plugins: {
       legend: {
         display: false,
@@ -838,7 +918,7 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
           title: (context) => {
             if (!context || context.length === 0) return "";
             const sample = sortedHistory[context[0].dataIndex];
-            if (!sample) return "";
+            if (!sample) return "Predicted Future Rate (Forecast)";
             return `Route: ${sample.pol} ➔ ${sample.pod}`;
           },
           label: (context) => {
@@ -858,7 +938,14 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
             if (!items || items.length === 0) return [];
             const idx = items[0].dataIndex;
             const item = sortedHistory[idx];
-            if (!item) return [];
+            if (!item) {
+              return [
+                "",
+                "FORECAST EXTRAPOLATION:",
+                "  • Extrapolated from historic pricing trend",
+                "  • Anticipates upcoming shipping season",
+              ];
+            }
 
             const total = item.total;
             const ocean = item.oceanFreight;
@@ -1124,9 +1211,50 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
     ],
   };
 
+  // Dynamically generated list of active chart data series for custom visual legend reference
+  const activeChartSeries = React.useMemo(() => {
+    return chartData.datasets.map((dataset: any, index: number) => {
+      // 0: Ocean Freight, 1: Total/Surcharges, 2+: Historical Trend Lines
+      let isTrend = index >= 2;
+      let badgeColor = "bg-blue-500";
+      let borderColor = "border-blue-600/15";
+      let description = "Base Ocean Carrier Rate";
+      let renderAsLine = false;
+      let customColor = "";
+
+      if (index === 0) {
+        badgeColor = "bg-blue-500";
+        borderColor = "border-blue-600/15";
+        description = t.oceanLabel || "Base Freight";
+      } else if (index === 1) {
+        badgeColor = "bg-violet-500";
+        borderColor = "border-violet-600/15";
+        description = chartMode === "grouped" ? "Ocean + Surcharges" : "Local Fees Only";
+      } else {
+        renderAsLine = true;
+        customColor = dataset.borderColor || "#6366f1";
+        description = "Time-series trend line";
+      }
+
+      return {
+        label: dataset.label,
+        badgeColor,
+        borderColor,
+        description,
+        renderAsLine,
+        customColor,
+        index
+      };
+    });
+  }, [chartData.datasets, chartMode, t]);
+
   const options: ChartOptions<"bar"> = {
     responsive: true,
     maintainAspectRatio: false,
+    animation: {
+      duration: 850,
+      easing: "easeOutQuart" as any,
+    },
     hover: {
       mode: "index",
       intersect: true,
@@ -1395,6 +1523,21 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
                       <span>Overlay Trends</span>
                     </button>
 
+                    {/* Predicted Rate Forecast Toggle Button */}
+                    <button
+                      id="chart-forecast-toggle-btn-main"
+                      onClick={() => setShowForecast(!showForecast)}
+                      className={`px-2.5 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1.5 transition-all duration-150 cursor-pointer ${
+                        showForecast
+                          ? "bg-pink-50 border-pink-200 text-pink-500 shadow-xs"
+                          : "bg-white border-slate-200/80 text-slate-500 hover:text-slate-800 hover:border-slate-350"
+                      }`}
+                      title="Overlay a 'Predicted Rate' forecast line based on historical trends (best viewed on individual carrier timeline profiles)."
+                    >
+                      <TrendingUp className="h-3 w-3 text-pink-500 font-bold" />
+                      <span>Forecast Rate</span>
+                    </button>
+
                     <div className="bg-slate-100 p-0.5 rounded-lg flex items-center border border-slate-200/60 shadow-xs">
                       <button
                         id="chart-mode-grouped-btn"
@@ -1427,7 +1570,15 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
             <div className="h-[280px] w-full relative" onDoubleClick={handleDoubleClick}>
               {filteredRates.length > 0 ? (
                 activeView === "chart" ? (
-                  <Bar ref={chartRef} data={chartData} options={options} plugins={[densityHeatmapPlugin]} />
+                  <motion.div
+                    key={carriersList.join(",")}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.35, ease: "easeOut" }}
+                    className="w-full h-full"
+                  >
+                    <Bar ref={chartRef} data={chartData} options={options} plugins={[densityHeatmapPlugin]} />
+                  </motion.div>
                 ) : (
                   <RoutesMap filteredRates={filteredRates} t={t} />
                 )
@@ -1443,44 +1594,39 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
               <div id="chart-custom-legend" className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-4 pt-3.5 border-t border-slate-100">
                 {activeView === "chart" ? (
                   <>
-                    <div className="flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rounded-full bg-blue-500 border border-blue-600/10 shadow-xs" />
-                      <span className="text-[11px] text-slate-600 font-medium">{t.chartOcean || "Ocean Freight"}</span>
-                      <span className="text-[10px] text-slate-400">({t.oceanLabel || "Base Freight"})</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rounded-full bg-violet-500 border border-violet-600/10 shadow-xs" />
-                      <span className="text-[11px] text-slate-600 font-medium">
-                        {chartMode === "grouped" ? (t.chartTotal || "Total Cost") : (t.surchargesBreakdown || "Surcharges")}
-                      </span>
-                      <span className="text-[10px] text-slate-400">
-                        {chartMode === "grouped" ? "(Ocean + All fees)" : "(Local fees & surcharges)"}
-                      </span>
-                    </div>
-                    {showHistoryLines && monthlyCarrierAverages.map((ma, idx) => {
-                      const color = linePalette[idx % linePalette.length];
-                      return (
-                        <div key={ma.month} className="flex items-center gap-2 animate-fade-in">
-                          <span className="h-1.5 w-4 rounded-full" style={{ backgroundColor: color }} />
-                          <span className="text-[11px] text-slate-600 font-semibold">{ma.month} Trend</span>
+                    {/* Dynamically Generated Active Series Reference */}
+                    <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 w-full mb-1">
+                      {activeChartSeries.map((series: any) => (
+                        <div
+                          key={series.index + "-" + series.label}
+                          className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-100 shadow-3xs hover:bg-slate-100/50 transition-colors duration-150 animate-fade-in"
+                        >
+                          {series.renderAsLine ? (
+                            <span className="h-1.5 w-4 rounded-full" style={{ backgroundColor: series.customColor }} />
+                          ) : (
+                            <span className={`h-2.5 w-2.5 rounded-full ${series.badgeColor} border ${series.borderColor} shadow-xs shrink-0`} />
+                          )}
+                          <span className="text-[11px] text-slate-700 font-semibold">{series.label}</span>
+                          <span className="text-[10px] text-slate-400 font-normal">({series.description})</span>
                         </div>
-                      );
-                    })}
+                      ))}
+                    </div>
+
                     {showDensityHeatmap && (
-                      <>
-                        <div className="flex items-center gap-2 border-l border-slate-200 pl-4 h-4 animate-fade-in">
-                          <span className="h-2.5 w-2.5 rounded bg-emerald-500/60 border border-emerald-600/10 shadow-3xs" />
-                          <span className="text-[11px] text-slate-600 font-medium">Optimized Cost Region</span>
+                      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 w-full mt-2 pt-2 border-t border-dashed border-slate-100">
+                        <div className="flex items-center gap-1.5 animate-fade-in">
+                          <span className="h-2 w-2 rounded bg-emerald-500/65 border border-emerald-600/10 shadow-3xs" />
+                          <span className="text-[10px] text-slate-500 font-medium">Optimized Cost Region</span>
                         </div>
-                        <div className="flex items-center gap-2 animate-fade-in">
-                          <span className="h-2.5 w-2.5 rounded bg-amber-500/60 border border-amber-600/10 shadow-3xs" />
-                          <span className="text-[11px] text-slate-600 font-medium">Moderate Cost Band</span>
+                        <div className="flex items-center gap-1.5 animate-fade-in">
+                          <span className="h-2 w-2 rounded bg-amber-500/65 border border-amber-600/10 shadow-3xs" />
+                          <span className="text-[10px] text-slate-500 font-medium">Moderate Cost Band</span>
                         </div>
-                        <div className="flex items-center gap-2 animate-fade-in">
-                          <span className="h-2.5 w-2.5 rounded bg-rose-500/60 border border-rose-600/10 shadow-3xs" />
-                          <span className="text-[11px] text-slate-600 font-medium">High-Cost Exposure</span>
+                        <div className="flex items-center gap-1.5 animate-fade-in">
+                          <span className="h-2 w-2 rounded bg-rose-500/65 border border-rose-600/10 shadow-3xs" />
+                          <span className="text-[10px] text-slate-500 font-medium">High-Cost Exposure</span>
                         </div>
-                      </>
+                      </div>
                     )}
                   </>
                 ) : (
@@ -1542,8 +1688,23 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
                 </div>
               </div>
 
-              <div id="drilldown-indicators" className="flex items-center gap-5 pr-1 text-[10px]">
-                <div className="flex items-center gap-1.5 font-medium">
+              <div id="drilldown-indicators" className="flex items-center gap-4 pr-1 text-[10px]">
+                {/* Forecast Line Toggle Button */}
+                <button
+                  id="chart-forecast-toggle-btn"
+                  onClick={() => setShowForecast(!showForecast)}
+                  className={`px-2 py-0.5 rounded-md border text-[9.5px] font-bold flex items-center gap-1 transition-all duration-150 cursor-pointer ${
+                    showForecast
+                      ? "bg-pink-50 border-pink-200 text-pink-600 shadow-xs"
+                      : "bg-white border-slate-200 text-slate-500 hover:text-slate-800 hover:border-slate-350"
+                  }`}
+                  title="Toggle 'Predicted Rate' forecast line based on historical trends."
+                >
+                  <TrendingUp className="h-3 w-3 text-pink-500" />
+                  <span>Forecast Rate</span>
+                </button>
+
+                <div className="flex items-center gap-1.5 font-medium border-l border-slate-200 pl-3">
                   <span className="h-2 w-2 rounded-full bg-blue-500" />
                   <span className="text-slate-500">Ocean Freight</span>
                 </div>
@@ -1551,13 +1712,27 @@ export default function RateChart({ t, filteredRates, onCarrierSelect, allRates 
                   <span className="h-2 w-2 rounded-full bg-violet-500" />
                   <span className="text-slate-500">Total tariff</span>
                 </div>
+                {showForecast && (
+                  <div className="flex items-center gap-1.5 font-semibold text-pink-600 animate-fade-in">
+                    <span className="h-2 w-2 rounded-full bg-pink-500 animate-pulse" />
+                    <span>Predicted (Forecast)</span>
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Timeline Line Chart */}
             <div className="h-[200px] w-full relative mb-4">
               {sortedHistory.length > 0 ? (
-                <Line data={timelineData} options={timelineOptions} plugins={[timelineAnnotationsPlugin]} />
+                <motion.div
+                  key={drilldownCarrier + "-" + sortedHistory.length + "-" + showForecast}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.35, ease: "easeOut" }}
+                  className="w-full h-full"
+                >
+                  <Line data={timelineData} options={timelineOptions} plugins={[timelineAnnotationsPlugin]} />
+                </motion.div>
               ) : (
                 <div className="w-full h-full flex items-center justify-center font-mono text-xs text-slate-400 italic">
                   No historical timeline data found for this carrier.

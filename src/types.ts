@@ -18,15 +18,25 @@ export interface FreightRate {
   thc?: number;
   lss?: number;
   otrosRecargos?: number;
+  // New fields from datos.js
+  contrato?: string | number;
+  nac?: string;
+  diasLibresOrigen?: string | number;
+  diasLibresDestino?: string | number;
+  validUntil?: string | number;
+  conceptos?: Record<string, any>;
+  oceanFreightDivisa?: string;
 }
 
 export interface ActiveFilters {
   mes: string;
-  pol: string;
-  pod: string;
-  carrier: string;
+  pol: string[];
+  pod: string[];
+  carrier: string[];
   sheetSource: string;
   carrierSearch?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface AppLog {
