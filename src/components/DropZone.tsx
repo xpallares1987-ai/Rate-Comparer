@@ -9,7 +9,7 @@ import { Upload, FileCode, CheckCircle2, AlertTriangle, PlayCircle } from "lucid
 import { FreightDB } from "../services/db";
 import { eventBus } from "../services/eventBus";
 import { FreightRate, TranslationSet } from "../types";
-import { parseRawSheetRows, parseDatosJsRows } from "../services/rateParser";
+import { parseRawSheetRows, parseDatosJsRows, parseSemicolonCSV } from "../services/rateParser";
 import { DATA_INJECTED } from "../data/datos";
 
 interface DropZoneProps {
@@ -60,16 +60,15 @@ export default function DropZone({ t }: DropZoneProps) {
   };
 
   const processFile = async (file: File) => {
-    if (
-      !file.name.endsWith(".xlsx") &&
-      !file.name.endsWith(".xls") &&
-      !file.name.endsWith(".xlsb") &&
-      !file.name.endsWith(".xlsm")
-    ) {
+    const nameLower = file.name.toLowerCase();
+    const isCsv = nameLower.endsWith(".csv");
+    const isExcel = nameLower.endsWith(".xlsx") || nameLower.endsWith(".xls") || nameLower.endsWith(".xlsb") || nameLower.endsWith(".xlsm");
+
+    if (!isCsv && !isExcel) {
       setFeedback({
         type: "error",
         message: t.invalidExcel,
-        details: "Expected file named 'DATO.xlsx' or matching Excel formats.",
+        details: "Expected file matching .xlsx, .xls, or .csv formats.",
       });
       return;
     }
@@ -82,49 +81,57 @@ export default function DropZone({ t }: DropZoneProps) {
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
-          const data = new Uint8Array(e.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: "array" });
+          let parsedRates: FreightRate[] = [];
 
-          const sheetsToRead = ["DATOS", "MESES ANTERIORES", "Buscador"];
-          const parsedRates: FreightRate[] = [];
+          if (isCsv) {
+            const text = e.target?.result as string;
+            parsedRates = parseSemicolonCSV(text, file.name);
+            if (parsedRates.length === 0) {
+              throw new Error("No rate records could be successfully parsed from this CSV file.");
+            }
+          } else {
+            const data = new Uint8Array(e.target?.result as ArrayBuffer);
+            const workbook = XLSX.read(data, { type: "array" });
 
-          let readAnySheet = false;
+            const sheetsToRead = ["DATOS", "MESES ANTERIORES", "Buscador"];
+            let readAnySheet = false;
 
-          for (const sheetName of workbook.SheetNames) {
-            const matchedName = sheetsToRead.find(
-              (s) => s.toLowerCase() === sheetName.toLowerCase()
-            );
+            for (const sheetName of workbook.SheetNames) {
+              const matchedName = sheetsToRead.find(
+                (s) => s.toLowerCase() === sheetName.toLowerCase()
+              );
 
-            if (!matchedName) {
-              continue;
+              if (!matchedName) {
+                continue;
+              }
+
+              readAnySheet = true;
+              const worksheet = workbook.Sheets[sheetName];
+              const rawRows = XLSX.utils.sheet_to_json<any>(worksheet, { defval: "" });
+
+              if (rawRows.length === 0) continue;
+
+              const sheetRates = parseRawSheetRows(rawRows, matchedName);
+              parsedRates.push(...sheetRates);
             }
 
-            readAnySheet = true;
-            const worksheet = workbook.Sheets[sheetName];
-            const rawRows = XLSX.utils.sheet_to_json<any>(worksheet, { defval: "" });
-
-            if (rawRows.length === 0) continue;
-
-            const sheetRates = parseRawSheetRows(rawRows, matchedName);
-            parsedRates.push(...sheetRates);
-          }
-
-          // Fallback: If no sheets matched the template names, try to parse the first sheet of the workbook anyway
-          if (parsedRates.length === 0 && workbook.SheetNames.length > 0) {
-            const firstSheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[firstSheetName];
-            const rawRows = XLSX.utils.sheet_to_json<any>(worksheet, { defval: "" });
-            if (rawRows.length > 0) {
-              const sheetRates = parseRawSheetRows(rawRows, firstSheetName);
-              if (sheetRates.length > 0) {
-                parsedRates.push(...sheetRates);
-                readAnySheet = true;
+            // Fallback: If no sheets matched the template names, try to parse the first sheet of the workbook anyway
+            if (parsedRates.length === 0 && workbook.SheetNames.length > 0) {
+              const firstSheetName = workbook.SheetNames[0];
+              const worksheet = workbook.Sheets[firstSheetName];
+              const rawRows = XLSX.utils.sheet_to_json<any>(worksheet, { defval: "" });
+              if (rawRows.length > 0) {
+                const sheetRates = parseRawSheetRows(rawRows, firstSheetName);
+                if (sheetRates.length > 0) {
+                  parsedRates.push(...sheetRates);
+                  readAnySheet = true;
+                }
               }
             }
-          }
 
-          if (!readAnySheet || parsedRates.length === 0) {
-            throw new Error("No matching spreadsheet records (sheets 'DATOS', 'MESES ANTERIORES' or 'Buscador' with corresponding columns) could be found.");
+            if (!readAnySheet || parsedRates.length === 0) {
+              throw new Error("No matching spreadsheet records (sheets 'DATOS', 'MESES ANTERIORES' or 'Buscador' with corresponding columns) could be found.");
+            }
           }
 
           await FreightDB.saveRates(parsedRates);
@@ -138,7 +145,7 @@ export default function DropZone({ t }: DropZoneProps) {
           eventBus.emit("data_loaded");
 
         } catch (err: any) {
-          console.error("[DropZone] Excel parsing error:", err);
+          console.error("[DropZone] Parsing error:", err);
           setFeedback({
             type: "error",
             message: t.uploadError,
@@ -149,7 +156,11 @@ export default function DropZone({ t }: DropZoneProps) {
         }
       };
 
-      reader.readAsArrayBuffer(file);
+      if (isCsv) {
+        reader.readAsText(file);
+      } else {
+        reader.readAsArrayBuffer(file);
+      }
     } catch (e: any) {
       console.error("[DropZone] File read crashed:", e);
       setFeedback({
@@ -227,7 +238,7 @@ export default function DropZone({ t }: DropZoneProps) {
           id="xlsx-file-input"
           ref={fileInputRef}
           type="file"
-          accept=".xlsx,.xls,.xlsb,.xlsm"
+          accept=".xlsx,.xls,.xlsb,.xlsm,.csv"
           onChange={handleFileInput}
           className="hidden"
         />
@@ -237,7 +248,7 @@ export default function DropZone({ t }: DropZoneProps) {
         </div>
 
         <p className="text-xs font-semibold text-slate-200">
-          Drag & Drop DATO.xlsx here
+          Drag & Drop rates file (Excel or CSV) here
         </p>
         <p className="text-[9px] text-slate-450 mt-0.5">
           or click to select file locally

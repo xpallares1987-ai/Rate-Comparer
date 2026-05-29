@@ -270,13 +270,67 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
       .style("opacity", 0);
 
     tooltipGroup.append("rect")
-      .attr("width", 135)
-      .attr("height", 46)
+      .attr("width", 285)
+      .attr("height", 58)
       .attr("rx", 6)
       .attr("fill", "#0f172a") // Deep slate
       .attr("stroke", "#4f46e5") // Indigo border
       .attr("stroke-width", 1.5)
       .attr("opacity", 0.96);
+
+    // Divider line between carrier details and thresholds dynamic legend
+    tooltipGroup.append("line")
+      .attr("x1", 145)
+      .attr("y1", 8)
+      .attr("x2", 145)
+      .attr("y2", 50)
+      .attr("stroke", "#334155")
+      .attr("stroke-width", 1)
+      .attr("stroke-dasharray", "2,2");
+
+    // Dynamic legend labels in top-right corner of the tooltip box
+    const legendBoxGroup = tooltipGroup.append("g")
+      .attr("transform", "translate(152, 0)");
+
+    legendBoxGroup.append("text")
+      .attr("x", 0)
+      .attr("y", 15)
+      .attr("fill", "#94a3b8")
+      .attr("font-size", "7px")
+      .attr("font-weight", "extrabold")
+      .attr("font-family", "sans-serif")
+      .attr("letter-spacing", "0.5px")
+      .text("METRIC BENCHMARKS");
+
+    const legRelIndicator = legendBoxGroup.append("g")
+      .attr("transform", "translate(0, 27)");
+
+    const legRelDot = legRelIndicator.append("circle")
+      .attr("cx", 4)
+      .attr("cy", -1.5)
+      .attr("r", 3);
+
+    const legRelText = legRelIndicator.append("text")
+      .attr("x", 12)
+      .attr("y", 1.5)
+      .attr("font-size", "8px")
+      .attr("font-weight", "bold")
+      .attr("font-family", "sans-serif");
+
+    const legDelayIndicator = legendBoxGroup.append("g")
+      .attr("transform", "translate(0, 42)");
+
+    const legDelayDot = legDelayIndicator.append("circle")
+      .attr("cx", 4)
+      .attr("cy", -1.5)
+      .attr("r", 3);
+
+    const legDelayText = legDelayIndicator.append("text")
+      .attr("x", 12)
+      .attr("y", 1.5)
+      .attr("font-size", "8px")
+      .attr("font-weight", "bold")
+      .attr("font-family", "sans-serif");
 
     const tooltipTitle = tooltipGroup.append("text")
       .attr("x", 10)
@@ -286,10 +340,18 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
       .attr("font-weight", "extrabold")
       .attr("font-family", "sans-serif");
 
-    const tooltipValue = tooltipGroup.append("text")
+    const tooltipRel = tooltipGroup.append("text")
       .attr("x", 10)
-      .attr("y", 32)
-      .attr("fill", "#a5b4fc")
+      .attr("y", 31)
+      .attr("fill", "#10b981") // emerald for reliability
+      .attr("font-size", "9px")
+      .attr("font-weight", "bold")
+      .attr("font-family", "monospace");
+
+    const tooltipDelay = tooltipGroup.append("text")
+      .attr("x", 10)
+      .attr("y", 45)
+      .attr("fill", "#38bdf8") // sky for delay
       .attr("font-size", "9px")
       .attr("font-weight", "bold")
       .attr("font-family", "monospace");
@@ -317,12 +379,30 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
       })
       .on("mousemove", (event, d: any) => {
         const [mx, my] = d3.pointer(event, svgElement.node());
-        const tx = mx + 15 > width - 145 ? mx - 145 : mx + 15;
+        const tx = mx + 20 > width - 285 ? mx - 285 - 15 : mx + 20;
         const ty = my - 25 < 0 ? my + 15 : my - 25;
         
         tooltipGroup.attr("transform", `translate(${tx}, ${ty})`);
         tooltipTitle.text(d.carrierName);
-        tooltipValue.text(`Reliability: ${d.reliability}%`);
+        tooltipRel.text(`Reliability: ${d.reliability}%`);
+        tooltipDelay.text(`Avg Delay: ${d.delay} days`);
+
+        // Dynamics thresholds highlight box
+        if (d.reliability >= 78) {
+          legRelDot.attr("fill", "#10b981");
+          legRelText.text("Rel: ≥78% (Excellent)").attr("fill", "#34d399");
+        } else {
+          legRelDot.attr("fill", "#f97316");
+          legRelText.text("Rel: <78% (Standard)").attr("fill", "#fb923c");
+        }
+
+        if (d.delay <= 3) {
+          legDelayDot.attr("fill", "#38bdf8");
+          legDelayText.text("Delay: ≤3d (Normal)").attr("fill", "#7dd3fc");
+        } else {
+          legDelayDot.attr("fill", "#ef4444");
+          legDelayText.text("Delay: >3d (Warning)").attr("fill", "#f87171");
+        }
       })
       .on("mouseout", (event) => {
         setHoveredCarrier(null);
@@ -388,7 +468,7 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
 
     leg1
       .attr("cursor", "pointer")
-      .on("mouseover", () => {
+      .on("mouseover", (event) => {
         d3.selectAll(".color-bar")
           .transition()
           .duration(200)
@@ -404,6 +484,33 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
           .style("transform-origin", (d: any) => `${x(d.reliability) + 8}px ${(y(d.carrierName) || 0) + y.bandwidth() / 2}px`);
 
         leg1.select("text").attr("fill", "#4f46e5");
+
+        const parentNode = document.querySelector("#carrier-performance-analytics-card .lg\\:col-span-8");
+        if (parentNode) {
+          const rect = parentNode.getBoundingClientRect();
+          const left = event.clientX - rect.left + 15;
+          const top = event.clientY - rect.top - 65;
+          
+          d3.select("#legend-tooltip-d3")
+            .style("left", `${left}px`)
+            .style("top", `${top}px`)
+            .style("opacity", 1);
+            
+          d3.select("#legend-tooltip-title").text("Excellent Reliability");
+          d3.select("#legend-tooltip-desc").text("Consistently high schedule adherence. Minimizes supply chain disruption and ensures timely cargo handling.");
+        }
+      })
+      .on("mousemove", (event) => {
+        const parentNode = document.querySelector("#carrier-performance-analytics-card .lg\\:col-span-8");
+        if (parentNode) {
+          const rect = parentNode.getBoundingClientRect();
+          const left = event.clientX - rect.left + 15;
+          const top = event.clientY - rect.top - 65;
+          
+          d3.select("#legend-tooltip-d3")
+            .style("left", `${left}px`)
+            .style("top", `${top}px`);
+        }
       })
       .on("mouseout", () => {
         d3.selectAll(".color-bar")
@@ -419,6 +526,7 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
           .attr("transform", "scale(1)");
 
         leg1.select("text").attr("fill", "#475569");
+        d3.select("#legend-tooltip-d3").style("opacity", 0);
       });
 
     const leg2 = legend.append("g").attr("transform", "translate(195, 0)");
@@ -445,7 +553,7 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
 
     leg2
       .attr("cursor", "pointer")
-      .on("mouseover", () => {
+      .on("mouseover", (event) => {
         d3.selectAll(".color-bar")
           .transition()
           .duration(200)
@@ -461,6 +569,33 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
           .style("transform-origin", (d: any) => `${x(d.reliability) + 8}px ${(y(d.carrierName) || 0) + y.bandwidth() / 2}px`);
 
         leg2.select("text").attr("fill", "#4f46e5");
+
+        const parentNode = document.querySelector("#carrier-performance-analytics-card .lg\\:col-span-8");
+        if (parentNode) {
+          const rect = parentNode.getBoundingClientRect();
+          const left = event.clientX - rect.left + 15;
+          const top = event.clientY - rect.top - 65;
+          
+          d3.select("#legend-tooltip-d3")
+            .style("left", `${left}px`)
+            .style("top", `${top}px`)
+            .style("opacity", 1);
+            
+          d3.select("#legend-tooltip-title").text("Standard Reliability");
+          d3.select("#legend-tooltip-desc").text("Standard or below-average schedule adherence. Subject to potential port congestion and transit variations.");
+        }
+      })
+      .on("mousemove", (event) => {
+        const parentNode = document.querySelector("#carrier-performance-analytics-card .lg\\:col-span-8");
+        if (parentNode) {
+          const rect = parentNode.getBoundingClientRect();
+          const left = event.clientX - rect.left + 15;
+          const top = event.clientY - rect.top - 65;
+          
+          d3.select("#legend-tooltip-d3")
+            .style("left", `${left}px`)
+            .style("top", `${top}px`);
+        }
       })
       .on("mouseout", () => {
         d3.selectAll(".color-bar")
@@ -476,6 +611,7 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
           .attr("transform", "scale(1)");
 
         leg2.select("text").attr("fill", "#475569");
+        d3.select("#legend-tooltip-d3").style("opacity", 0);
       });
 
     // Store current state for next render transitions
@@ -639,13 +775,67 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
       .style("opacity", 0);
 
     tooltipGroup.append("rect")
-      .attr("width", 135)
-      .attr("height", 46)
+      .attr("width", 285)
+      .attr("height", 58)
       .attr("rx", 6)
       .attr("fill", "#0f172a")
       .attr("stroke", "#4f46e5")
       .attr("stroke-width", 1.5)
       .attr("opacity", 0.96);
+
+    // Divider line between carrier details and thresholds dynamic legend
+    tooltipGroup.append("line")
+      .attr("x1", 145)
+      .attr("y1", 8)
+      .attr("x2", 145)
+      .attr("y2", 50)
+      .attr("stroke", "#334155")
+      .attr("stroke-width", 1)
+      .attr("stroke-dasharray", "2,2");
+
+    // Dynamic legend labels in top-right corner of the tooltip box
+    const legendBoxGroup = tooltipGroup.append("g")
+      .attr("transform", "translate(152, 0)");
+
+    legendBoxGroup.append("text")
+      .attr("x", 0)
+      .attr("y", 15)
+      .attr("fill", "#94a3b8")
+      .attr("font-size", "7px")
+      .attr("font-weight", "extrabold")
+      .attr("font-family", "sans-serif")
+      .attr("letter-spacing", "0.5px")
+      .text("METRIC BENCHMARKS");
+
+    const legRelIndicator = legendBoxGroup.append("g")
+      .attr("transform", "translate(0, 27)");
+
+    const legRelDot = legRelIndicator.append("circle")
+      .attr("cx", 4)
+      .attr("cy", -1.5)
+      .attr("r", 3);
+
+    const legRelText = legRelIndicator.append("text")
+      .attr("x", 12)
+      .attr("y", 1.5)
+      .attr("font-size", "8px")
+      .attr("font-weight", "bold")
+      .attr("font-family", "sans-serif");
+
+    const legDelayIndicator = legendBoxGroup.append("g")
+      .attr("transform", "translate(0, 42)");
+
+    const legDelayDot = legDelayIndicator.append("circle")
+      .attr("cx", 4)
+      .attr("cy", -1.5)
+      .attr("r", 3);
+
+    const legDelayText = legDelayIndicator.append("text")
+      .attr("x", 12)
+      .attr("y", 1.5)
+      .attr("font-size", "8px")
+      .attr("font-weight", "bold")
+      .attr("font-family", "sans-serif");
 
     const tooltipTitle = tooltipGroup.append("text")
       .attr("x", 10)
@@ -655,10 +845,18 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
       .attr("font-weight", "extrabold")
       .attr("font-family", "sans-serif");
 
-    const tooltipValue = tooltipGroup.append("text")
+    const tooltipRel = tooltipGroup.append("text")
       .attr("x", 10)
-      .attr("y", 32)
-      .attr("fill", "#a5b4fc")
+      .attr("y", 31)
+      .attr("fill", "#10b981") // emerald for reliability
+      .attr("font-size", "9px")
+      .attr("font-weight", "bold")
+      .attr("font-family", "monospace");
+
+    const tooltipDelay = tooltipGroup.append("text")
+      .attr("x", 10)
+      .attr("y", 45)
+      .attr("fill", "#38bdf8") // sky for delay
       .attr("font-size", "9px")
       .attr("font-weight", "bold")
       .attr("font-family", "monospace");
@@ -686,12 +884,30 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
       })
       .on("mousemove", (event, d: any) => {
         const [mx, my] = d3.pointer(event, svgElement.node());
-        const tx = mx + 15 > width - 145 ? mx - 145 : mx + 15;
+        const tx = mx + 20 > width - 285 ? mx - 285 - 15 : mx + 20;
         const ty = my - 25 < 0 ? my + 15 : my - 25;
         
         tooltipGroup.attr("transform", `translate(${tx}, ${ty})`);
         tooltipTitle.text(d.carrierName);
-        tooltipValue.text(`Transit Delay: ${d.delay} days`);
+        tooltipRel.text(`Reliability: ${d.reliability}%`);
+        tooltipDelay.text(`Avg Delay: ${d.delay} days`);
+
+        // Dynamics thresholds highlight box
+        if (d.reliability >= 78) {
+          legRelDot.attr("fill", "#10b981");
+          legRelText.text("Rel: ≥78% (Excellent)").attr("fill", "#34d399");
+        } else {
+          legRelDot.attr("fill", "#f97316");
+          legRelText.text("Rel: <78% (Standard)").attr("fill", "#fb923c");
+        }
+
+        if (d.delay <= 3) {
+          legDelayDot.attr("fill", "#38bdf8");
+          legDelayText.text("Delay: ≤3d (Normal)").attr("fill", "#7dd3fc");
+        } else {
+          legDelayDot.attr("fill", "#ef4444");
+          legDelayText.text("Delay: >3d (Warning)").attr("fill", "#f87171");
+        }
       })
       .on("mouseout", (event) => {
         setHoveredCarrier(null);
@@ -765,7 +981,7 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
 
     leg1
       .attr("cursor", "pointer")
-      .on("mouseover", () => {
+      .on("mouseover", (event) => {
         d3.selectAll(".lollipop-circle")
           .transition()
           .duration(200)
@@ -786,6 +1002,33 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
           .style("transform-origin", (d: any) => `${x(d.delay) + 10}px ${(y(d.carrierName) || 0) + y.bandwidth() / 2 + 3.5}px`);
 
         leg1.select("text").attr("fill", "#4f46e5");
+
+        const parentNode = document.querySelector("#carrier-performance-analytics-card .lg\\:col-span-8");
+        if (parentNode) {
+          const rect = parentNode.getBoundingClientRect();
+          const left = event.clientX - rect.left + 15;
+          const top = event.clientY - rect.top - 65;
+          
+          d3.select("#legend-tooltip-d3")
+            .style("left", `${left}px`)
+            .style("top", `${top}px`)
+            .style("opacity", 1);
+            
+          d3.select("#legend-tooltip-title").text("Normal Transit");
+          d3.select("#legend-tooltip-desc").text("Delays within acceptable operational limits. Indicates swift terminal clearance and fluid customs processing.");
+        }
+      })
+      .on("mousemove", (event) => {
+        const parentNode = document.querySelector("#carrier-performance-analytics-card .lg\\:col-span-8");
+        if (parentNode) {
+          const rect = parentNode.getBoundingClientRect();
+          const left = event.clientX - rect.left + 15;
+          const top = event.clientY - rect.top - 65;
+          
+          d3.select("#legend-tooltip-d3")
+            .style("left", `${left}px`)
+            .style("top", `${top}px`);
+        }
       })
       .on("mouseout", () => {
         d3.selectAll(".lollipop-circle")
@@ -807,6 +1050,7 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
           .attr("transform", "scale(1)");
 
         leg1.select("text").attr("fill", "#475569");
+        d3.select("#legend-tooltip-d3").style("opacity", 0);
       });
 
     const leg2 = legend.append("g").attr("transform", "translate(195, 0)");
@@ -842,7 +1086,7 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
 
     leg2
       .attr("cursor", "pointer")
-      .on("mouseover", () => {
+      .on("mouseover", (event) => {
         d3.selectAll(".lollipop-circle")
           .transition()
           .duration(200)
@@ -863,6 +1107,33 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
           .style("transform-origin", (d: any) => `${x(d.delay) + 10}px ${(y(d.carrierName) || 0) + y.bandwidth() / 2 + 3.5}px`);
 
         leg2.select("text").attr("fill", "#4f46e5");
+
+        const parentNode = document.querySelector("#carrier-performance-analytics-card .lg\\:col-span-8");
+        if (parentNode) {
+          const rect = parentNode.getBoundingClientRect();
+          const left = event.clientX - rect.left + 15;
+          const top = event.clientY - rect.top - 65;
+          
+          d3.select("#legend-tooltip-d3")
+            .style("left", `${left}px`)
+            .style("top", `${top}px`)
+            .style("opacity", 1);
+            
+          d3.select("#legend-tooltip-title").text("Port Congestion Warning");
+          d3.select("#legend-tooltip-desc").text("Significant transit bottleneck. Common triggers include marine terminal delays, customs audits, or chassis shortages.");
+        }
+      })
+      .on("mousemove", (event) => {
+        const parentNode = document.querySelector("#carrier-performance-analytics-card .lg\\:col-span-8");
+        if (parentNode) {
+          const rect = parentNode.getBoundingClientRect();
+          const left = event.clientX - rect.left + 15;
+          const top = event.clientY - rect.top - 65;
+          
+          d3.select("#legend-tooltip-d3")
+            .style("left", `${left}px`)
+            .style("top", `${top}px`);
+        }
       })
       .on("mouseout", () => {
         d3.selectAll(".lollipop-circle")
@@ -884,6 +1155,7 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
           .attr("transform", "scale(1)");
 
         leg2.select("text").attr("fill", "#475569");
+        d3.select("#legend-tooltip-d3").style("opacity", 0);
       });
 
     // Store current state for next render transitions
@@ -952,6 +1224,16 @@ export default function CarrierPerformance({ t, filteredRates }: CarrierPerforma
         {/* SVG charts wrapper (8/12 space) */}
         <div className="lg:col-span-8 bg-slate-50/50 rounded-xl border border-slate-150 p-4 relative min-h-[190px] transition-all duration-500 ease-in-out">
           
+          {/* Custom D3 Legend Tooltip */}
+          <div
+            id="legend-tooltip-d3"
+            className="absolute bg-slate-900/95 border border-indigo-500 text-white p-2.5 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200 z-50 max-w-[220px]"
+            style={{ left: 0, top: 0 }}
+          >
+            <div id="legend-tooltip-title" className="font-extrabold text-[10px] text-indigo-300 uppercase tracking-wider mb-1" />
+            <div id="legend-tooltip-desc" className="text-[9px] text-slate-200 leading-relaxed font-sans" />
+          </div>
+
           <div className={`${activeTab === "reliability" ? "block animate-none" : "hidden"}`}>
             <div className="flex justify-between items-center mb-2 px-1">
               <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1 font-mono">

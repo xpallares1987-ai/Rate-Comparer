@@ -27,8 +27,13 @@ export function getHeaderKey(headers: string[], targetNames: string[]): string |
 export function parseNum(val: any): number {
   if (val === undefined || val === null || val === "") return 0;
   if (typeof val === "number") return val;
-  const clean = String(val).replace(/[\$\s,]/g, "");
-  const parsed = parseFloat(clean);
+  let str = String(val).replace(/[\$\s]/g, "");
+  if (str.includes(",") && !str.includes(".")) {
+    str = str.replace(",", ".");
+  } else {
+    str = str.replace(/,/g, "");
+  }
+  const parsed = parseFloat(str);
   return isNaN(parsed) ? 0 : parsed;
 }
 
@@ -255,6 +260,155 @@ export function parseDatosJsRows(rawRecords: any[]): FreightRate[] {
       });
     });
   });
+
+  return parsedRates;
+}
+
+/**
+ * Parses semicolon-separated CSV content representing freight records into FreightRate structures
+ */
+export function parseSemicolonCSV(csvText: string, fileName = "Imported CSV"): FreightRate[] {
+  const lines = csvText.split(/\r?\n/);
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].split(';').map(h => h.trim());
+  const headerIndices: Record<string, number> = {};
+  headers.forEach((h, index) => {
+    headerIndices[h] = index;
+  });
+
+  const getHeaderVal = (rowCols: string[], headerName: string, fallback = ""): string => {
+    const index = headerIndices[headerName];
+    if (index === undefined || index >= rowCols.length) return fallback;
+    return rowCols[index].trim();
+  };
+
+  const parsedRates: FreightRate[] = [];
+
+  for (let idx = 1; idx < lines.length; idx++) {
+    const line = lines[idx].trim();
+    if (!line || line.startsWith(';-') || line.startsWith('--------------') || line.match(/^;+$/)) {
+      continue;
+    }
+    
+    const cols = line.split(';').map(c => c.trim());
+    if (cols.length < 5) continue;
+
+    const monthRaw = getHeaderVal(cols, "Month");
+    if (!monthRaw || monthRaw.toLowerCase().includes("month") || monthRaw.startsWith('--------------')) continue;
+
+    const mes = monthRaw.toUpperCase();
+    const pol = getHeaderVal(cols, "Port of Loading");
+    const pod = getHeaderVal(cols, "Port of Discharge");
+    const carrierRaw = getHeaderVal(cols, "Carrier");
+    
+    let carrier = carrierRaw;
+    if (carrierRaw.toUpperCase() === "HAPAG") carrier = "HAPAG-LLOYD";
+    
+    const oceanFreight = parseNum(getHeaderVal(cols, "Ocean freight"));
+    const oceanFreightDivisa = getHeaderVal(cols, "Ocean freight Currency") || "USD";
+
+    const contrato = getHeaderVal(cols, "CONTRATO");
+    const nac = getHeaderVal(cols, "NAC") || "—";
+    
+    const freeDaysOriginRaw = getHeaderVal(cols, "Dias libres en Origen");
+    const freeDaysDestRaw = getHeaderVal(cols, "Dias Libres en Destino");
+    const diasLibresOrigen = freeDaysOriginRaw ? parseInt(freeDaysOriginRaw, 10) || "—" : "—";
+    const diasLibresDestino = freeDaysDestRaw ? parseInt(freeDaysDestRaw, 10) || "—" : "—";
+
+    const validUntil = getHeaderVal(cols, "Valid Until");
+
+    // Build conceptos and compute sum totals
+    const conceptos: Record<string, any> = {};
+    const EUR_USD_RATE = 1.08;
+    let totalUSD = oceanFreightDivisa === "EUR" ? oceanFreight * EUR_USD_RATE : oceanFreight;
+    let gastosFob = 0;
+    let gastosDestino = 0;
+    let baf = 0;
+    let thc = 0;
+    let lss = 0;
+    let otrosRecargos = 0;
+
+    headers.forEach((h, hIdx) => {
+      if (h.startsWith("CON:") || h.startsWith("DOC:")) {
+        const val = parseNum(cols[hIdx]);
+        if (val !== 0) {
+          let divisa = "EUR"; // default fallback
+          const nextH = headers[hIdx + 1];
+          if (nextH && (nextH.toLowerCase().includes("currency") || nextH.toLowerCase() === "divisa")) {
+            divisa = cols[hIdx + 1] || "EUR";
+          }
+          conceptos[h] = { val, divisa };
+          
+          const valUSD = divisa === "EUR" ? val * EUR_USD_RATE : val;
+          totalUSD += valUSD;
+
+          const lowKey = h.toLowerCase();
+          if (lowKey.includes("baf")) {
+            baf += valUSD;
+          } else if (lowKey.includes("thco") || lowKey.includes("thc")) {
+            thc += valUSD;
+            gastosFob += valUSD;
+          } else if (lowKey.includes("lss") || lowKey.includes("seca") || lowKey.includes("co2")) {
+            lss += valUSD;
+          } else if (lowKey.startsWith("doc:") || lowKey.includes("porto") || lowKey.includes("vgm") || lowKey.includes("fob")) {
+            gastosFob += valUSD;
+          } else if (lowKey.includes("portd") || lowKey.includes("thcd") || lowKey.includes("owd") || lowKey.includes("onct")) {
+            gastosDestino += valUSD;
+          } else {
+            otrosRecargos += valUSD;
+          }
+        }
+      }
+    });
+
+    // Check dual POL and POD split logics
+    const cleanPol = pol.toUpperCase().trim().replace(/\s+/g, "");
+    let polsToCreate: string[] = [];
+    if (cleanPol === "BARCELONA/VALENCIA" || cleanPol === "VALENCIA/BARCELONA") {
+      polsToCreate = ["Barcelona", "Valencia"];
+    } else {
+      polsToCreate = [pol];
+    }
+
+    const cleanPod = pod.toUpperCase().trim().replace(/\s+/g, "");
+    let podsToCreate: string[] = [];
+    if (cleanPod.includes("ALGER(ARGEL)&SKIKDA&ANNABA") || cleanPod.includes("ALGER(ARGEL)&SKIDKA&ANNABA") || 
+        (cleanPod.includes("ALGER") && cleanPod.includes("SKIKDA") && cleanPod.includes("ANNABA"))) {
+      podsToCreate = ["Alger (Argel)", "Skikda", "Annaba"];
+    } else if (cleanPod === "ALTAMIRA&VERACRUZ" || cleanPod === "VERACRUZ&ALTAMIRA" || cleanPod.includes("ALTAMIRA&VERACRUZ")) {
+      podsToCreate = ["Altamira", "Veracruz"];
+    } else {
+      podsToCreate = [pod];
+    }
+
+    polsToCreate.forEach((pName) => {
+      podsToCreate.forEach((dName) => {
+        parsedRates.push({
+          sheetSource: fileName,
+          mes: toProperCase(mes),
+          pol: toProperCase(pName),
+          pod: toProperCase(dName),
+          carrier: toProperCase(carrier),
+          total: Math.round(totalUSD * 100) / 100,
+          gastosFob: Math.round(gastosFob * 100) / 100,
+          oceanFreight,
+          oceanFreightDivisa,
+          gastosDestino: Math.round(gastosDestino * 100) / 100,
+          baf: Math.round(baf * 100) / 100,
+          thc: Math.round(thc * 100) / 100,
+          lss: Math.round(lss * 100) / 100,
+          otrosRecargos: Math.round(otrosRecargos * 100) / 100,
+          contrato,
+          nac,
+          diasLibresOrigen,
+          diasLibresDestino,
+          validUntil,
+          conceptos,
+        });
+      });
+    });
+  }
 
   return parsedRates;
 }
